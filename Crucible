@@ -1,0 +1,623 @@
+
+--// PURPLE CRUCIBLE AWAKENING V3 💜
+--// Delta Mobile | Client-side
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+
+local player = Players.LocalPlayer
+local PURPLE = Color3.fromRGB(170, 0, 255)
+local PINK = Color3.fromRGB(255, 100, 255)
+local TARGET_SPEED = 30.3
+
+local ANIMATION_IDS = {
+    ["105487601049036"] = true,
+    ["124399675702648"] = true
+}
+
+local function run()
+    local char = player.Character or player.CharacterAdded:Wait()
+    local hum = char:WaitForChild("Humanoid")
+    local root = char:WaitForChild("HumanoidRootPart")
+    local camera = workspace.CurrentCamera
+    local oldSpeed = hum.WalkSpeed
+    local oldFOV = camera.FieldOfView
+
+    local pickFolder = workspace:FindFirstChild("PickItem")
+    assert(pickFolder, "Không tìm thấy workspace.PickItem")
+
+    local source = pickFolder:FindFirstChild("Crucible")
+    assert(source, "Không tìm thấy PickItem.Crucible")
+
+    local sourceParts = {}
+    for _, v in ipairs(source:GetDescendants()) do
+        if v:IsA("BasePart") then
+            table.insert(sourceParts, v)
+        end
+    end
+
+    if source:IsA("BasePart") then
+        table.insert(sourceParts, source)
+    end
+
+    assert(#sourceParts > 0, "Crucible không có BasePart")
+
+    local sourceRoot = source:FindFirstChild("Handle", true)
+    if not (sourceRoot and sourceRoot:IsA("BasePart")) then
+        sourceRoot = sourceParts[1]
+    end
+
+    local previous = workspace:FindFirstChild("PurpleCrucible_Dupe")
+    if previous then previous:Destroy() end
+
+    local sword = source:Clone()
+    sword.Name = "PurpleCrucible_Dupe"
+
+    for _, v in ipairs(sword:GetDescendants()) do
+        if v:IsA("Script") or v:IsA("LocalScript") then
+            v:Destroy()
+        end
+    end
+
+    sword.Parent = workspace
+
+    local cloneRoot = sword:FindFirstChild(sourceRoot.Name, true)
+    if not (cloneRoot and cloneRoot:IsA("BasePart")) then
+        cloneRoot = nil
+        for _, v in ipairs(sword:GetDescendants()) do
+            if v:IsA("BasePart") then
+                cloneRoot = v
+                break
+            end
+        end
+    end
+
+    assert(cloneRoot, "Bản sao không có part gốc")
+
+    local cloneParts, offsets = {}, {}
+
+    for _, v in ipairs(sword:GetDescendants()) do
+        if v:IsA("BasePart") then
+            offsets[v] = cloneRoot.CFrame:ToObjectSpace(v.CFrame)
+            table.insert(cloneParts, v)
+            v.Anchored = true
+            v.CanCollide = false
+            v.CanTouch = false
+            v.CanQuery = false
+        end
+    end
+
+    local function moveSword(cf)
+        for _, part in ipairs(cloneParts) do
+            if part.Parent then
+                part.CFrame = cf * offsets[part]
+            end
+        end
+    end
+
+    local function recolor(obj)
+        if obj:IsA("BasePart") then
+            obj.Color = PURPLE
+            obj.Material = Enum.Material.Neon
+        end
+
+        for _, v in ipairs(obj:GetDescendants()) do
+            if v:IsA("BasePart") then
+                v.Color = PURPLE
+                v.Material = Enum.Material.Neon
+            elseif v:IsA("ParticleEmitter") then
+                v.Color = ColorSequence.new(PURPLE, PINK)
+                v.Enabled = true
+            elseif v:IsA("Beam") or v:IsA("Trail") then
+                v.Color = ColorSequence.new(PURPLE, PINK)
+                v.Enabled = true
+            elseif v:IsA("PointLight") or v:IsA("SpotLight") then
+                v.Color = PURPLE
+                v.Enabled = true
+            end
+        end
+    end
+
+    local function bolt(a, b, parent)
+        local d = b - a
+        if d.Magnitude < 0.1 then return end
+
+        local part = Instance.new("Part")
+        part.Name = "PurpleBolt"
+        part.Anchored = true
+        part.CanCollide = false
+        part.CanTouch = false
+        part.CanQuery = false
+        part.Material = Enum.Material.Neon
+        part.Color = PINK
+        part.Size = Vector3.new(0.14, 0.14, d.Magnitude)
+        part.CFrame = CFrame.lookAt((a + b) / 2, b)
+        part.Parent = parent or workspace
+        Debris:AddItem(part, 0.15)
+    end
+
+    local function burst(center, count)
+        for i = 1, count do
+            local offset = Vector3.new(
+                math.random(-100, 100) / 10,
+                math.random(-100, 100) / 10,
+                math.random(-100, 100) / 10
+            )
+            bolt(center + offset, center)
+            task.wait(0.025)
+        end
+    end
+
+    local function explosion(pos)
+        local ball = Instance.new("Part")
+        ball.Shape = Enum.PartType.Ball
+        ball.Anchored = true
+        ball.CanCollide = false
+        ball.CanTouch = false
+        ball.CanQuery = false
+        ball.Material = Enum.Material.Neon
+        ball.Color = PURPLE
+        ball.Transparency = 0.15
+        ball.Size = Vector3.one
+        ball.Position = pos
+        ball.Parent = workspace
+
+        local light = Instance.new("PointLight")
+        light.Color = PINK
+        light.Brightness = 12
+        light.Range = 30
+        light.Parent = ball
+
+        TweenService:Create(
+            ball,
+            TweenInfo.new(0.6, Enum.EasingStyle.Exponential),
+            {Size = Vector3.new(28, 28, 28), Transparency = 1}
+        ):Play()
+
+        Debris:AddItem(ball, 1)
+    end
+
+    --// FLOATING CRUCIBLE
+    local destination = root.Position
+        + root.CFrame.LookVector * 14
+        + Vector3.new(0, 2.5, 0)
+
+    local start = os.clock()
+    local floating = true
+    local floatConn
+
+    floatConn = RunService.Heartbeat:Connect(function()
+        if not sword.Parent then
+            floatConn:Disconnect()
+            return
+        end
+
+        if floating then
+            local bob = math.sin((os.clock() - start) * 2) * 0.35
+            local pos = destination + Vector3.new(0, bob, 0)
+
+            moveSword(
+                CFrame.lookAt(pos, pos + Vector3.new(0, 0, -1))
+                * CFrame.Angles(0, math.sin(os.clock()) * 0.08, 0)
+            )
+        end
+    end)
+
+    hum.WalkSpeed = 10
+
+    while hum.Health > 0 and sword.Parent do
+        if (root.Position - destination).Magnitude <= 9 then
+            break
+        end
+        hum:MoveTo(destination)
+        task.wait(0.15)
+    end
+
+    hum:MoveTo(root.Position)
+    task.wait(0.6)
+
+    for i = 1, 15 do
+        bolt(
+            destination + Vector3.new(
+                math.random(-8, 8),
+                math.random(4, 10),
+                math.random(-8, 8)
+            ),
+            destination
+        )
+        task.wait(0.08)
+    end
+
+    burst(destination, 100)
+    task.wait(5)
+    explosion(destination)
+
+    camera.FieldOfView = oldFOV - 12
+
+    local shakeStart = os.clock()
+    local shakeConn
+    shakeConn = RunService.RenderStepped:Connect(function()
+        if os.clock() - shakeStart > 0.5 then
+            shakeConn:Disconnect()
+            return
+        end
+
+        camera.CFrame = camera.CFrame * CFrame.new(
+            (math.random() - 0.5) * 0.3,
+            (math.random() - 0.5) * 0.3,
+            0
+        )
+    end)
+
+    local recoil = TweenService:Create(
+        root,
+        TweenInfo.new(0.3, Enum.EasingStyle.Exponential),
+        {CFrame = root.CFrame - root.CFrame.LookVector * 10}
+    )
+    recoil:Play()
+    recoil.Completed:Wait()
+    task.wait(3)
+
+    floating = false
+    recolor(sword)
+
+    local prompt = Instance.new("ProximityPrompt")
+    prompt.ActionText = "Take Sword"
+    prompt.ObjectText = "Purple Crucible"
+    prompt.HoldDuration = 0.5
+    prompt.MaxActivationDistance = 10
+    prompt.RequiresLineOfSight = false
+    prompt.Parent = cloneRoot
+
+    --// SKILL STATE
+    local activated = false
+    local skillsLoaded = false
+    local activeM8 = false
+    local m8EndTime = 0
+    local skillReady = true
+    local speedConn
+    local backpackConn
+    local characterConn
+    local childConn
+    local animationConn
+    local lightningFolder
+
+    local function findCrucible()
+        local backpack = player:FindFirstChildOfClass("Backpack")
+        local character = player.Character
+
+        local tool = character and character:FindFirstChild("Crucible")
+        if tool and tool:IsA("Tool") then return tool end
+
+        tool = backpack and backpack:FindFirstChild("Crucible")
+        if tool and tool:IsA("Tool") then return tool end
+
+        return nil
+    end
+
+    local function hasPurpleCrucible()
+        local tool = findCrucible()
+        if not tool then return false end
+
+        local blade = tool:FindFirstChild("Blade", true)
+        if blade and blade:IsA("BasePart") then
+            return blade.Color == PURPLE
+                and blade.Material == Enum.Material.Neon
+        end
+
+        for _, part in ipairs(tool:GetDescendants()) do
+            if part:IsA("BasePart")
+                and part.Color == PURPLE
+                and part.Material == Enum.Material.Neon then
+                return true
+            end
+        end
+
+        return false
+    end
+
+    local function nearestEnemy(maxDistance)
+        local character = player.Character
+        local myRoot = character and character:FindFirstChild("HumanoidRootPart")
+        if not myRoot then return nil end
+
+        local nearest, nearestRoot
+        local shortest = maxDistance
+
+        for _, other in ipairs(Players:GetPlayers()) do
+            if other ~= player
+                and other.Team ~= player.Team
+                and other.Character then
+
+                local enemyHum = other.Character:FindFirstChildOfClass("Humanoid")
+                local enemyRoot = other.Character:FindFirstChild("HumanoidRootPart")
+
+                if enemyHum and enemyHum.Health > 0 and enemyRoot then
+                    local distance = (enemyRoot.Position - myRoot.Position).Magnitude
+
+                    if distance <= shortest then
+                        shortest = distance
+                        nearest = other
+                        nearestRoot = enemyRoot
+                    end
+                end
+            end
+        end
+
+        return nearest, nearestRoot
+    end
+
+    local function makeButton(gui, name, label, position)
+        local button = Instance.new("TextButton")
+        button.Name = name
+        button.Text = label
+        button.Size = UDim2.fromOffset(105, 46)
+        button.Position = position
+        button.BackgroundColor3 = PURPLE
+        button.TextColor3 = Color3.new(1, 1, 1)
+        button.TextScaled = true
+        button.Font = Enum.Font.GothamBold
+        button.Parent = gui
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 12)
+        corner.Parent = button
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = PINK
+        stroke.Thickness = 2
+        stroke.Parent = button
+
+        return button
+    end
+
+    local function setupSkills()
+        if skillsLoaded then return end
+        skillsLoaded = true
+
+        local playerGui = player:WaitForChild("PlayerGui")
+        local oldGui = playerGui:FindFirstChild("PurpleCrucibleSkills")
+        if oldGui then oldGui:Destroy() end
+
+        local gui = Instance.new("ScreenGui")
+        gui.Name = "PurpleCrucibleSkills"
+        gui.ResetOnSpawn = false
+        gui.Parent = playerGui
+
+        local m8 = makeButton(
+            gui, "M8", "M8 ⚡",
+            UDim2.new(1, -235, 1, -160)
+        )
+
+        local m9 = makeButton(
+            gui, "M9", "M9 ✦",
+            UDim2.new(1, -120, 1, -160)
+        )
+
+        lightningFolder = Instance.new("Folder")
+        lightningFolder.Name = "M8PurpleLightning"
+        lightningFolder.Parent = workspace
+
+        local lightningRunning = false
+
+        local function startLightning()
+            if lightningRunning then return end
+            lightningRunning = true
+
+            task.spawn(function()
+                while activeM8 and os.clock() < m8EndTime do
+                    local character = player.Character
+                    local playerRoot = character
+                        and character:FindFirstChild("HumanoidRootPart")
+
+                    if playerRoot then
+                        local center = playerRoot.Position
+
+                        for i = 1, 3 do
+                            local angle = math.random() * math.pi * 2
+                            local radius = math.random(2, 4)
+
+                            local a = center + Vector3.new(
+                                math.cos(angle) * radius,
+                                math.random(0, 5),
+                                math.sin(angle) * radius
+                            )
+
+                            local b = center + Vector3.new(
+                                math.cos(angle + 1) * 0.5,
+                                math.random(0, 5),
+                                math.sin(angle + 1) * 0.5
+                            )
+
+                            bolt(a, b, lightningFolder)
+                        end
+                    end
+
+                    task.wait(0.12)
+                end
+
+                lightningRunning = false
+            end)
+        end
+
+        m8.MouseButton1Click:Connect(function()
+            if not hasPurpleCrucible() then
+                m8.Text = "Need Purple!"
+                task.delay(1, function()
+                    if m8.Parent then m8.Text = "M8 ⚡" end
+                end)
+                return
+            end
+
+            if activeM8 then
+                activeM8 = false
+                m8.Text = "M8 ⚡"
+                return
+            end
+
+            activeM8 = true
+            m8EndTime = os.clock() + 30
+            startLightning()
+
+            task.spawn(function()
+                while activeM8 and os.clock() < m8EndTime do
+                    m8.Text = "M8: " .. math.ceil(m8EndTime - os.clock()) .. "s"
+                    task.wait(0.2)
+                end
+
+                activeM8 = false
+                if m8.Parent then m8.Text = "M8 ⚡" end
+            end)
+        end)
+
+        m9.MouseButton1Click:Connect(function()
+            if not hasPurpleCrucible() then
+                m9.Text = "Need Purple!"
+                task.delay(1, function()
+                    if m9.Parent then m9.Text = "M9 ✦" end
+                end)
+                return
+            end
+
+            local _, enemyRoot = nearestEnemy(25)
+            local character = player.Character
+            local myRoot = character and character:FindFirstChild("HumanoidRootPart")
+
+            if not enemyRoot or not myRoot then
+                m9.Text = "No Enemy!"
+                task.delay(1, function()
+                    if m9.Parent then m9.Text = "M9 ✦" end
+                end)
+                return
+            end
+
+            local behind = enemyRoot.Position
+                - enemyRoot.CFrame.LookVector * 11
+
+            myRoot.CFrame = CFrame.lookAt(behind, enemyRoot.Position)
+        end)
+
+        local function watchCharacter(character)
+            if animationConn then
+                animationConn:Disconnect()
+                animationConn = nil
+            end
+
+            local humanoid = character:WaitForChild("Humanoid")
+
+            animationConn = humanoid.AnimationPlayed:Connect(function(track)
+                if not activeM8 or not hasPurpleCrucible() then return end
+
+                local animation = track.Animation
+                if not animation then return end
+
+                local id = animation.AnimationId:match("%d+")
+                if not id or not ANIMATION_IDS[id] then return end
+                if not skillReady then return end
+
+                skillReady = false
+
+                task.spawn(function()
+                    local _, enemyRoot = nearestEnemy(25)
+                    local currentCharacter = player.Character
+                    local myRoot = currentCharacter
+                        and currentCharacter:FindFirstChild("HumanoidRootPart")
+
+                    if enemyRoot and myRoot then
+                        local targetPosition =
+                            enemyRoot.Position - enemyRoot.CFrame.LookVector * 3
+
+                        local goal = CFrame.lookAt(
+                            targetPosition,
+                            enemyRoot.Position
+                        )
+
+                        local tween = TweenService:Create(
+                            myRoot,
+                            TweenInfo.new(0.22, Enum.EasingStyle.Quad),
+                            {CFrame = goal}
+                        )
+
+                        tween:Play()
+                        tween.Completed:Wait()
+                    end
+
+                    task.wait(0.35)
+                    skillReady = true
+                end)
+            end)
+        end
+
+        if player.Character then
+            watchCharacter(player.Character)
+        end
+
+        characterConn = player.CharacterAdded:Connect(watchCharacter)
+
+        backpackConn = player:WaitForChild("Backpack").ChildAdded:Connect(function(child)
+            if child:IsA("Tool") and child.Name == "Crucible" then
+                task.defer(function()
+                    if child.Parent then recolor(child) end
+                end)
+            end
+        end)
+
+        speedConn = RunService.Heartbeat:Connect(function()
+            local character = player.Character
+            local humanoid = character
+                and character:FindFirstChildOfClass("Humanoid")
+
+            if not humanoid then return end
+
+            local equipped = character:FindFirstChild("Crucible")
+
+            if equipped and equipped:IsA("Tool") and hasPurpleCrucible() then
+                recolor(equipped)
+                humanoid.WalkSpeed = TARGET_SPEED
+            elseif humanoid.WalkSpeed == TARGET_SPEED then
+                humanoid.WalkSpeed = oldSpeed
+            end
+        end)
+    end
+
+    prompt.Triggered:Connect(function()
+        if activated then return end
+        activated = true
+        prompt.Enabled = false
+
+        floating = false
+        if floatConn then
+            floatConn:Disconnect()
+            floatConn = nil
+        end
+
+        if sword and sword.Parent then
+            sword:Destroy()
+        end
+
+        local realTool = findCrucible()
+        if realTool then
+            recolor(realTool)
+        else
+            warn("💜 Crucible thật chưa có trong Backpack/Character.")
+        end
+
+        setupSkills()
+
+        TweenService:Create(camera, TweenInfo.new(0.5), {
+            FieldOfView = oldFOV
+        }):Play()
+
+        print("💜 Purple Crucible awakened! M8 + M9 ready.")
+    end)
+
+    hum.WalkSpeed = oldSpeed
+    print("💜 Awakening ready! Hold the prompt to claim.")
+end
+
+local ok, err = pcall(run)
+if not ok then
+    warn("[Purple Crucible Error] " .. tostring(err))
+end
